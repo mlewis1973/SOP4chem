@@ -12,7 +12,7 @@ def bounds_check(vertex, bounds): # (numpy.ndarray, pd.df)
     inside = np.logical_and.reduce(vertex>lower) and np.logical_and.reduce(vertex<upper)
     return inside
 
-def simplex_step(df,bounds,scale=1.):
+def simplex_step(df,bounds,scale=1.,code=-9999.0):
     Np = len(df.columns)-2 # number of parameters
     Ns = Np + 1          # dim of simplex
     iter_no = len(df)    # df.tail(1)['iteration'].iloc[0]
@@ -25,12 +25,12 @@ def simplex_step(df,bounds,scale=1.):
     i = 1
     if not isinstance(bounds,type(None)):
         while not bounds_check(new_vertex, bounds): # take a step back from boundary
-            new_vertex = centroid + ( (0.5)**i  )*scale*(centroid - worst)
+            new_vertex = centroid + ( (1.0/3.0)**i  )*scale*(centroid - worst)
             i += 1
     
     df = pd.concat( [df[:-Ns] , simplex] )
     
-    df.loc[iter_no] = [iter_no+1] + new_vertex.tolist()+[-99999.]
+    df.loc[iter_no] = [iter_no+1] + new_vertex.tolist()+[code]
     return df  
 
 def init_argparse() -> argparse.ArgumentParser:
@@ -65,8 +65,10 @@ if not isinstance(args.bounds, type(None)):
         sys.exit(1)
 
 scale = 1.
+code = -9999.0
 
-if df.at[ df.index[-1],'score'] < 0 :    # waiting for last experiment to be complete
+last_score = df.at[ df.index[-1],'score']
+if last_score < 0 :    # waiting for last experiment to be complete
     print(df)
     try:
         new_score = float(input('If you have performed last experiment in table above, please enter new positive score (negative value will exit program): '))
@@ -79,25 +81,43 @@ if df.at[ df.index[-1],'score'] < 0 :    # waiting for last experiment to be com
         sys.exit(0)
 
     previous_scores = df.tail(len(df.columns)).head(len(df.columns) - 1)['score'].to_numpy()
+    previous_scores = np.sort(previous_scores)
     if new_score > previous_scores[-1]: # expansion rule 1
-        scale = 2.0 
-        #df = pd.concat( [ df.tail(1) , df.head( len(df)-1 ) ] ) 
-        df = df.head( len(df)-1 )
-        df = simplex_step(df,bounds,scale)
-    elif new_score > previous_scores[-2]: # accept simplex rule 2
+        print('RULE 1')
+        if last_score < code: # handle previous expansion properly
+            scale = 1.0
+            df.at[ df.index[-1],'score'] = new_score
+        else: 
+            scale = 2.0 
+            code = -11111.0
+            df = pd.concat( [ df.tail(1) , df.head( len(df)-1 ) ] ) 
+            #df = df.head( len(df)-1 )
+            df.at[ df.index[0],'score'] = new_score
+            #df = simplex_step(df,bounds,scale)
+    elif new_score >= previous_scores[-2]: # accept simplex rule 2
+        print('RULE 2')
         scale = 1.0
+        df.at[ df.index[-1],'score'] = new_score
+        #df = simplex_step(df,bounds,scale)
     elif new_score > previous_scores[0]: # mini-expansion rule 3a
+        print('RULE 3a')
         scale = 0.5
-        df = df.head( len(df)-1 )
-        df = simplex_step(df,bounds,scale)
+        df = pd.concat( [ df.tail(1) , df.head( len(df)-1 ) ] )
+        #df = df.head( len(df)-1 )
+        df.at[ df.index[0],'score'] = new_score
+        #df = simplex_step(df,bounds,scale)
     else: # mini-contraction rule 3b
+        print('RULE 3b')
         scale = -0.5
-        df = df.head( len(df)-1 )
-        df = simplex_step(df,bounds,scale)
+        #df = df.head( len(df)-1 )
+        df = pd.concat( [ df.tail(1) , df.head( len(df)-1 ) ] )
+        df.at[ df.index[0],'score'] = new_score
+        #df = simplex_step(df,bounds,scale)
 
-    df.at[ df.index[-1],'score'] = new_score
- 
-df = simplex_step(df,bounds)
+#    df.at[ df.index[-1],'score'] = new_score
+#else: 
+#    df = simplex_step(df,bounds)
+df = simplex_step(df,bounds,scale,code)
 print(df)
 print('Please perform the experiment in the latest iteration above.\nThen re-run this program and enter new score.\n')
 df.to_csv(args.file,index=False)
